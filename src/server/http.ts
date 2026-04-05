@@ -19,8 +19,11 @@ import {
   mcpAuthRouter,
 } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  hostHeaderValidation,
+  localhostHostValidation,
+} from "@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type {
   OAuthClientInformationFull,
@@ -31,7 +34,7 @@ import {
   checkResourceAllowed,
   resourceUrlFromServerUrl,
 } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
-import express, { type Request, type Response } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import { timingSafeTokenEqual } from "../utils/crypto.js";
 import { logger } from "../utils/logging.js";
 
@@ -393,7 +396,7 @@ export async function startHttp(createServer: ServerFactory): Promise<void> {
   );
   const sessions = new Map<string, AuthSession>();
   const transports = new Map<string, StreamableHTTPServerTransport>();
-  const app = createMcpExpressApp({ host });
+  const app = createHttpApp(host);
   const authMiddleware = requireBearerAuth({
     verifier: provider,
     requiredScopes: [...SUPPORTED_SCOPES],
@@ -401,6 +404,30 @@ export async function startHttp(createServer: ServerFactory): Promise<void> {
   });
 
   app.disable("x-powered-by");
+  app.use((req, res, next) => {
+    if (!isOAuthRequestPath(req.path, publicBasePath, mcpServerUrl)) {
+      next();
+      return;
+    }
+
+    logger.info("OAuth HTTP request", {
+      method: req.method,
+      path: req.path,
+      content_type: getHeaderValue(req.headers["content-type"]),
+      content_length: getHeaderValue(req.headers["content-length"]),
+      user_agent: getHeaderValue(req.headers["user-agent"]),
+    });
+
+    res.on("finish", () => {
+      logger.info("OAuth HTTP response", {
+        method: req.method,
+        path: req.path,
+        status_code: res.statusCode,
+      });
+    });
+
+    next();
+  });
 
   const authContext: AuthorizeContext = {
     provider,
@@ -1087,7 +1114,7 @@ function resolvePublicBaseUrl(port: number): URL {
 }
 
 async function listen(
-  app: ReturnType<typeof createMcpExpressApp>,
+  app: Express,
   port: number,
   host: string,
 ): Promise<HttpServer> {
@@ -1095,6 +1122,47 @@ async function listen(
     const server = app.listen(port, host, () => resolve(server));
     server.on("error", reject);
   });
+}
+
+function createHttpApp(host: string): Express {
+  const app = express();
+  const localhostHosts = ["127.0.0.1", "localhost", "::1"];
+
+  if (localhostHosts.includes(host)) {
+    app.use(localhostHostValidation());
+  } else if (host === "0.0.0.0" || host === "::") {
+    logger.warn(
+      `Server is binding to ${host} without DNS rebinding protection. Consider using MCP_ALLOWED_HOSTS to restrict allowed hosts, or use authentication to protect the server.`,
+      {},
+    );
+  }
+
+  const allowedHosts = process.env.MCP_ALLOWED_HOSTS?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (allowedHosts?.length) {
+    app.use(hostHeaderValidation(allowedHosts));
+  }
+
+  return app;
+}
+
+function isOAuthRequestPath(
+  requestPath: string,
+  publicBasePath: string,
+  mcpServerUrl: URL,
+): boolean {
+  const oauthPaths = new Set([
+    joinPath(publicBasePath, "/authorize"),
+    joinPath(publicBasePath, "/register"),
+    joinPath(publicBasePath, "/token"),
+    joinPath(publicBasePath, "/revoke"),
+    "/.well-known/oauth-authorization-server",
+    new URL(getOAuthProtectedResourceMetadataUrl(mcpServerUrl)).pathname,
+  ]);
+
+  return oauthPaths.has(requestPath);
 }
 
 function registerShutdownHandler(
