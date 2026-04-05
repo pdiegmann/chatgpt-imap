@@ -57,6 +57,8 @@ The server loads a single connection automatically from environment variables.
 | `MCP_OAUTH_PASSWORD` | required for HTTP | Single-user password used on the built-in OAuth login page. |
 | `MCP_PORT` | no | HTTP port when using `http`. Defaults to `3000`. |
 | `MCP_HOST` | no | Bind host for HTTP mode. Defaults to `0.0.0.0`. |
+| `MCP_TRUST_PROXY` | no | Express `trust proxy` setting for HTTP mode. Default is `1` (trust one reverse proxy hop), which is recommended behind Traefik/Nginx. Set to `false` only if running without a reverse proxy. |
+| `MCP_ALLOWED_HOSTS` | no | Optional comma-separated hostnames for Host-header validation (for example: `imap-mcp.hnnl.eu,localhost`). |
 | `MCP_OAUTH_ACCESS_TOKEN_TTL` | no | OAuth access token lifetime in seconds. Defaults to `3600`. |
 | `MCP_OAUTH_REFRESH_TOKEN_TTL` | no | OAuth refresh token lifetime in seconds. Defaults to `2592000` (30 days). |
 

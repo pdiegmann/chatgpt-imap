@@ -1127,6 +1127,17 @@ async function listen(
 function createHttpApp(host: string): Express {
   const app = express();
   const localhostHosts = ["127.0.0.1", "localhost", "::1"];
+  const trustProxy = resolveTrustProxyValue();
+
+  if (trustProxy !== false) {
+    app.set("trust proxy", trustProxy);
+    logger.info("Express trust proxy enabled", { trust_proxy: trustProxy });
+  } else {
+    logger.warn(
+      "Express trust proxy is disabled; OAuth rate-limiting may misbehave behind reverse proxies",
+      {},
+    );
+  }
 
   if (localhostHosts.includes(host)) {
     app.use(localhostHostValidation());
@@ -1146,6 +1157,41 @@ function createHttpApp(host: string): Express {
   }
 
   return app;
+}
+
+function resolveTrustProxyValue(): boolean | number {
+  const raw = process.env.MCP_TRUST_PROXY?.trim();
+
+  if (!raw) {
+    return 1;
+  }
+
+  const normalized = raw.toLowerCase();
+  if (
+    normalized === "true" ||
+    normalized === "1" ||
+    normalized === "yes" ||
+    normalized === "on"
+  ) {
+    return true;
+  }
+
+  if (
+    normalized === "false" ||
+    normalized === "0" ||
+    normalized === "no" ||
+    normalized === "off"
+  ) {
+    return false;
+  }
+
+  const numericValue = Number.parseInt(raw, 10);
+  if (Number.isFinite(numericValue) && numericValue >= 0) {
+    return numericValue;
+  }
+
+  logger.warn(`Invalid MCP_TRUST_PROXY value "${raw}"; defaulting to 1`, {});
+  return 1;
 }
 
 function isOAuthRequestPath(
