@@ -248,7 +248,17 @@ If you want HTTP mode in the container, set `MCP_TRANSPORT=http`, `MCP_BASE_URL`
 
 ### Behind Traefik
 
-Traefik should route to the HTTP transport, not stdio. The app listens on `MCP_PORT` inside the container and must expose not only `/mcp`, but also `/authorize` and the OAuth discovery endpoints under `/.well-known`.
+Traefik should route to the HTTP transport, not stdio. The app listens on `MCP_PORT` inside the container and must expose the full OAuth surface, not just `/mcp`:
+
+- `/mcp`
+- `/authorize`
+- `/register`
+- `/token`
+- `/revoke`
+- `/.well-known/oauth-authorization-server`
+- `/.well-known/oauth-protected-resource/...`
+
+If any of those are blocked or buffered incorrectly by the proxy, ChatGPT app creation can hang during OAuth client registration with little or no application logging.
 
 #### `docker run`
 

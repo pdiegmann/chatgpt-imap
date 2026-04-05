@@ -401,8 +401,6 @@ export async function startHttp(createServer: ServerFactory): Promise<void> {
   });
 
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "1mb" }));
-  app.use(express.urlencoded({ extended: false }));
 
   const authContext: AuthorizeContext = {
     provider,
@@ -417,9 +415,13 @@ export async function startHttp(createServer: ServerFactory): Promise<void> {
     await handleAuthorizeGet(req, res, authContext);
   });
 
-  app.post(authorizePath, async (req, res) => {
-    await handleAuthorizePost(req, res, authContext);
-  });
+  app.post(
+    authorizePath,
+    express.urlencoded({ extended: false }),
+    async (req, res) => {
+      await handleAuthorizePost(req, res, authContext);
+    },
+  );
 
   app.use(
     routeMountPath,
@@ -432,61 +434,66 @@ export async function startHttp(createServer: ServerFactory): Promise<void> {
     }),
   );
 
-  app.post(mcpPath, authMiddleware, async (req, res) => {
-    const sessionId = getHeaderValue(req.headers["mcp-session-id"]);
+  app.post(
+    mcpPath,
+    express.json({ limit: "1mb" }),
+    authMiddleware,
+    async (req, res) => {
+      const sessionId = getHeaderValue(req.headers["mcp-session-id"]);
 
-    try {
-      const transport = sessionId ? transports.get(sessionId) : undefined;
+      try {
+        const transport = sessionId ? transports.get(sessionId) : undefined;
 
-      if (!transport) {
-        if (sessionId || !isInitializeRequest(req.body)) {
-          res.status(400).json({
-            jsonrpc: "2.0",
-            error: {
-              code: -32000,
-              message: "Bad Request: No valid session ID provided",
+        if (!transport) {
+          if (sessionId || !isInitializeRequest(req.body)) {
+            res.status(400).json({
+              jsonrpc: "2.0",
+              error: {
+                code: -32000,
+                message: "Bad Request: No valid session ID provided",
+              },
+              id: null,
+            });
+            return;
+          }
+
+          const newTransport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (newSessionId) => {
+              transports.set(newSessionId, newTransport);
             },
-            id: null,
           });
+
+          newTransport.onclose = () => {
+            if (newTransport.sessionId) {
+              transports.delete(newTransport.sessionId);
+            }
+          };
+
+          const server = createServer();
+          await server.connect(newTransport);
+          await newTransport.handleRequest(req, res, req.body);
           return;
         }
 
-        const newTransport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (newSessionId) => {
-            transports.set(newSessionId, newTransport);
-          },
+        await transport.handleRequest(req, res, req.body);
+      } catch (error) {
+        logger.error("HTTP MCP POST request failed", {
+          error: String(error),
         });
-
-        newTransport.onclose = () => {
-          if (newTransport.sessionId) {
-            transports.delete(newTransport.sessionId);
-          }
-        };
-
-        const server = createServer();
-        await server.connect(newTransport);
-        await newTransport.handleRequest(req, res, req.body);
-        return;
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32603,
+              message: "Internal server error",
+            },
+            id: null,
+          });
+        }
       }
-
-      await transport.handleRequest(req, res, req.body);
-    } catch (error) {
-      logger.error("HTTP MCP POST request failed", {
-        error: String(error),
-      });
-      if (!res.headersSent) {
-        res.status(500).json({
-          jsonrpc: "2.0",
-          error: {
-            code: -32603,
-            message: "Internal server error",
-          },
-          id: null,
-        });
-      }
-    }
-  });
+    },
+  );
 
   app.get(mcpPath, authMiddleware, async (req, res) => {
     await handleSessionRequest(req, res, transports, "GET");
