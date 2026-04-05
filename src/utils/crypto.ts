@@ -1,4 +1,4 @@
-import { createHash } from "crypto";
+import { createHash, timingSafeEqual } from "crypto";
 import type { EmailRef } from "../types/email.js";
 
 export function encodeEmailRef(ref: EmailRef): string {
@@ -22,4 +22,14 @@ export function decodeEmailRef(encoded: string): EmailRef {
   if (isNaN(uid) || isNaN(uid_validity))
     throw new Error(`Invalid email_ref numeric fields: ${encoded}`);
   return { account_id, folder, uid_validity, uid };
+}
+
+/**
+ * Compares two strings in constant time by hashing both to SHA-256 digests
+ * before comparison. Prevents timing attacks on bearer token validation.
+ */
+export function timingSafeTokenEqual(a: string, b: string): boolean {
+  const hashA = createHash("sha256").update(a).digest();
+  const hashB = createHash("sha256").update(b).digest();
+  return timingSafeEqual(hashA, hashB);
 }
