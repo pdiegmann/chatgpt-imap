@@ -16,20 +16,21 @@ COPY src ./src
 COPY tsconfig.json ./
 
 # Build the project (if using TypeScript)
-RUN bun run build || true
+RUN bun run build
 
 # Production image, copy only necessary files
 FROM oven/bun:1.1.13-alpine AS prod
 WORKDIR /app
 
-# Copy node_modules and built files from base
-COPY --from=base /app/node_modules ./node_modules
-COPY --from=base /app/src ./src
-COPY --from=base /app/tsconfig.json ./
-COPY package.json ./
+# Install only production dependencies
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
+
+# Copy compiled output from the build stage
+COPY --from=base /app/dist ./dist
 
 # Set environment variables
 ENV NODE_ENV=production
 
 # Default command (adjust as needed)
-CMD ["bun", "run", "start"]
+CMD ["bun", "dist/server/mcp.js"]

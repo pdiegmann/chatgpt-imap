@@ -229,6 +229,56 @@ docker run --rm --env-file .env chatgpt-imap
 
 If you want HTTP mode in the container, set `MCP_TRANSPORT=http` and `MCP_AUTH_TOKEN`.
 
+### Behind Traefik
+
+Traefik should route to the HTTP transport, not stdio. The app listens on `MCP_PORT` inside the container and expects requests at `/mcp` with a Bearer token.
+
+#### `docker run`
+
+```bash
+docker run -d \
+	--name ghcr.io/pdiegmann/chatgpt-imap \
+	--network traefik \
+	--env-file .env \
+	-e MCP_TRANSPORT=http \
+	-e MCP_AUTH_TOKEN=your-long-secret \
+	-e MCP_PORT=3000 \
+	-l traefik.enable=true \
+	-l traefik.http.routers.chatgpt-imap.rule="Host(`mcp.example.com`) && PathPrefix(`/mcp`)" \
+	-l traefik.http.routers.chatgpt-imap.entrypoints=websecure \
+	-l traefik.http.routers.chatgpt-imap.tls=true \
+	-l traefik.http.services.chatgpt-imap.loadbalancer.server.port=3000 \
+	chatgpt-imap
+```
+
+#### `docker compose`
+
+```yaml
+services:
+  chatgpt-imap:
+    image: ghcr.io/pdiegmann/chatgpt-imap
+    env_file:
+      - .env
+    environment:
+      MCP_TRANSPORT: http
+      MCP_AUTH_TOKEN: your-long-secret
+      MCP_PORT: 3000
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.chatgpt-imap.rule: Host(`mcp.example.com`) && PathPrefix(`/mcp`)
+      traefik.http.routers.chatgpt-imap.entrypoints: websecure
+      traefik.http.routers.chatgpt-imap.tls: "true"
+      traefik.http.services.chatgpt-imap.loadbalancer.server.port: "3000"
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    external: true
+```
+
+In both cases, configure your client to send `Authorization: Bearer <MCP_AUTH_TOKEN>` to the Traefik URL.
+
 ## Development
 
 - `npm run lint` — Biome lint
