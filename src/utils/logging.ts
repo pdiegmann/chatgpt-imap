@@ -40,7 +40,7 @@ function sanitize(obj: unknown): unknown {
 export function log(
   level: LogLevel,
   message: string,
-  context?: Record<string, unknown>
+  context?: Record<string, unknown>,
 ): void {
   if (!shouldLog(level)) return;
   const entry: Record<string, unknown> = {
@@ -52,9 +52,9 @@ export function log(
     entry.context = sanitize(context);
   }
   if (level === LogLevel.ERROR || level === LogLevel.WARN) {
-    process.stderr.write(JSON.stringify(entry) + "\n");
+    process.stderr.write(`${JSON.stringify(entry)}\n`);
   } else {
-    process.stdout.write(JSON.stringify(entry) + "\n");
+    process.stdout.write(`${JSON.stringify(entry)}\n`);
   }
 }
 

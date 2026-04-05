@@ -6,7 +6,12 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server/mcp.js",
-    "dev": "ts-node --esm src/server/mcp.ts"
+    "dev": "ts-node --esm src/server/mcp.ts",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "format": "biome format --write ."
   },
   "repository": {
     "type": "git",
@@ -29,6 +34,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^25.5.2",
     "@types/nodemailer": "^8.0.0",

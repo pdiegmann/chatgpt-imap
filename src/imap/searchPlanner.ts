@@ -1,13 +1,13 @@
-import type { ImapFlow, FetchMessageObject } from "imapflow";
-import type { SearchQuery } from "../types/query.js";
+import type { ImapFlow } from "imapflow";
 import type { EmailSummary } from "../types/email.js";
 import type { FolderInfo } from "../types/folder.js";
-import { compileQuery } from "./queryCompiler.js";
+import type { SearchQuery } from "../types/query.js";
 import { encodeEmailRef } from "../utils/crypto.js";
 import { logger } from "../utils/logging.js";
+import { compileQuery } from "./queryCompiler.js";
 
 function formatAddress(
-  addr: { name?: string; address?: string } | null | undefined
+  addr: { name?: string; address?: string } | null | undefined,
 ): string {
   if (!addr) return "";
   if (addr.name && addr.address && addr.name !== addr.address)
@@ -16,7 +16,7 @@ function formatAddress(
 }
 
 function formatAddressList(
-  list: Array<{ name?: string; address?: string }> | null | undefined
+  list: Array<{ name?: string; address?: string }> | null | undefined,
 ): string[] {
   if (!list) return [];
   return list.map(formatAddress).filter(Boolean);
@@ -26,7 +26,7 @@ export async function executeSearch(
   client: ImapFlow,
   accountId: string,
   searchQuery: SearchQuery,
-  folders: FolderInfo[]
+  folders: FolderInfo[],
 ): Promise<{
   results: EmailSummary[];
   total_estimate: number;
@@ -45,7 +45,7 @@ export async function executeSearch(
     }
   } else {
     targetFolders.push(
-      ...folders.filter((f) => f.can_select).map((f) => f.path)
+      ...folders.filter((f) => f.can_select).map((f) => f.path),
     );
   }
 
@@ -69,6 +69,7 @@ export async function executeSearch(
 
         // imapflow's search() returns false when no messages match (not an empty array)
         const searchResult = await client.search(imapSearch, { uid: true });
+        // biome-ignore lint/complexity/useOptionalChain: searchResult can be "false" which would not have "uid" property, but if it's an array it should be treated as such
         if (!searchResult || !searchResult.length) continue;
         const uids = searchResult;
 
@@ -83,7 +84,7 @@ export async function executeSearch(
             envelope: true,
             bodyStructure: true,
           },
-          { uid: true }
+          { uid: true },
         )) {
           const env = msg.envelope;
           const uid = msg.uid;
@@ -99,7 +100,7 @@ export async function executeSearch(
             msg.bodyStructure?.childNodes != null
               ? msg.bodyStructure.childNodes.some(
                   (n: { disposition?: string }) =>
-                    n.disposition === "attachment"
+                    n.disposition === "attachment",
                 )
               : null;
 
@@ -108,8 +109,7 @@ export async function executeSearch(
             folder: folderPath,
             uid,
             message_id: env?.messageId ?? null,
-            date:
-              env?.date?.toISOString() ?? new Date().toISOString(),
+            date: env?.date?.toISOString() ?? new Date().toISOString(),
             from: formatAddress(env?.from?.[0]),
             to: formatAddressList(env?.to),
             cc: formatAddressList(env?.cc),
@@ -127,13 +127,15 @@ export async function executeSearch(
         folder: folderPath,
         error: String(e),
       });
-      warnings.push(
-        `Search failed for folder "${folderPath}": ${String(e)}`
-      );
+      warnings.push(`Search failed for folder "${folderPath}": ${String(e)}`);
     }
   }
 
   const total = allResults.length;
   const paginated = allResults.slice(offset, offset + limit);
-  return { results: paginated, total_estimate: total, search_warnings: warnings };
+  return {
+    results: paginated,
+    total_estimate: total,
+    search_warnings: warnings,
+  };
 }
