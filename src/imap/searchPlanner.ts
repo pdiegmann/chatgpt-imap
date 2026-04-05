@@ -67,6 +67,7 @@ export async function executeSearch(
           // use default
         }
 
+        // imapflow's search() returns false when no messages match (not an empty array)
         const searchResult = await client.search(imapSearch, { uid: true });
         if (!searchResult || !searchResult.length) continue;
         const uids = searchResult;

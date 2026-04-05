@@ -20,7 +20,7 @@ export const ErrorSchema = z.object({
   error: z.object({
     code: ErrorCodeEnum,
     message: z.string(),
-    details: z.union([z.record(z.string(), z.unknown()), z.null()]).optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 
@@ -31,5 +31,5 @@ export function makeError(
   message: string,
   details?: Record<string, unknown>
 ): AppError {
-  return { error: { code, message, details: details ?? null } };
+  return { error: { code, message, details } };
 }

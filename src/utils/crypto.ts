@@ -23,7 +23,3 @@ export function decodeEmailRef(encoded: string): EmailRef {
     throw new Error(`Invalid email_ref numeric fields: ${encoded}`);
   return { account_id, folder, uid_validity, uid };
 }
-
-export function hashPassword(password: string): string {
-  return createHash("sha256").update(password).digest("hex");
-}
