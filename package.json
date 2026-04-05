@@ -1,0 +1,38 @@
+{
+  "name": "chatgpt-imap",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/server/mcp.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server/mcp.js",
+    "dev": "ts-node --esm src/server/mcp.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pdiegmann/chatgpt-imap.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/pdiegmann/chatgpt-imap/issues"
+  },
+  "homepage": "https://github.com/pdiegmann/chatgpt-imap#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.4.0",
+    "imapflow": "^1.2.18",
+    "mailparser": "^3.9.6",
+    "nodemailer": "^8.0.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^25.5.2",
+    "@types/nodemailer": "^8.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
+  }
+}
