@@ -2,7 +2,7 @@
 
 An MCP server for working with IMAP mailboxes.
 
-It exposes mailbox discovery, search, read, flag, move, and draft-creation tools over either stdio or an authenticated HTTP transport.
+It exposes mailbox discovery, search, read, flag, move, and draft-creation tools over either stdio or an OAuth-protected HTTP transport.
 
 ## What it does
 
@@ -53,8 +53,12 @@ The server loads a single connection automatically from environment variables.
 | `SMTP_TLS` | no | Stored in the connection config, but not currently used by the implemented tools. |
 | `LOG_LEVEL` | no | `DEBUG`, `INFO`, `WARN`, or `ERROR`. Defaults to `INFO`. |
 | `MCP_TRANSPORT` | no | `stdio` or `http`. Defaults to `stdio`. |
-| `MCP_AUTH_TOKEN` | required for HTTP | Bearer token required when `MCP_TRANSPORT=http`. |
+| `MCP_BASE_URL` | recommended for HTTP, effectively required for ChatGPT | Public base URL for the HTTP server, OAuth discovery, and redirects. Example: `https://mcp.example.com`. If omitted, the server falls back to `http://127.0.0.1:<MCP_PORT>`, which is only useful locally. |
+| `MCP_OAUTH_PASSWORD` | required for HTTP | Single-user password used on the built-in OAuth login page. |
 | `MCP_PORT` | no | HTTP port when using `http`. Defaults to `3000`. |
+| `MCP_HOST` | no | Bind host for HTTP mode. Defaults to `0.0.0.0`. |
+| `MCP_OAUTH_ACCESS_TOKEN_TTL` | no | OAuth access token lifetime in seconds. Defaults to `3600`. |
+| `MCP_OAUTH_REFRESH_TOKEN_TTL` | no | OAuth refresh token lifetime in seconds. Defaults to `2592000` (30 days). |
 
 ## Running locally
 
@@ -75,16 +79,28 @@ npm start
 
 ### HTTP transport
 
-Set `MCP_TRANSPORT=http` and provide `MCP_AUTH_TOKEN`.
+Set `MCP_TRANSPORT=http`, `MCP_BASE_URL`, and `MCP_OAUTH_PASSWORD`.
 
-The server listens on `/mcp` and requires:
+The server exposes:
 
-- `Authorization: Bearer <token>`
+- the MCP endpoint at `/mcp`
+- OAuth metadata and protected-resource discovery endpoints under `/.well-known/...`
+- an authorization page at `/authorize`
+
+On first connection, ChatGPT should open the OAuth page in a browser. You then:
+
+1. enter the single shared password
+2. click `Allow`
+
+After that, ChatGPT uses OAuth access tokens automatically.
 
 Example:
 
 ```bash
-MCP_TRANSPORT=http MCP_AUTH_TOKEN=your-long-secret npm start
+MCP_TRANSPORT=http \
+MCP_BASE_URL=https://mcp.example.com \
+MCP_OAUTH_PASSWORD=choose-a-strong-password \
+npm start
 ```
 
 ## Available tools
@@ -212,6 +228,7 @@ Important behavior:
 - `email_ref` values are stable per account, folder, UID validity, and message UID
 - The server currently auto-loads one account from environment variables; additional accounts would need to be registered in code before startup
 - Logging redacts obvious secrets such as passwords and tokens
+- HTTP mode is designed for one user and uses a simple built-in OAuth approval flow
 
 ## Docker
 
@@ -227,11 +244,11 @@ Run it with your environment variables, for example:
 docker run --rm --env-file .env chatgpt-imap
 ```
 
-If you want HTTP mode in the container, set `MCP_TRANSPORT=http` and `MCP_AUTH_TOKEN`.
+If you want HTTP mode in the container, set `MCP_TRANSPORT=http`, `MCP_BASE_URL`, and `MCP_OAUTH_PASSWORD`.
 
 ### Behind Traefik
 
-Traefik should route to the HTTP transport, not stdio. The app listens on `MCP_PORT` inside the container and expects requests at `/mcp` with a Bearer token.
+Traefik should route to the HTTP transport, not stdio. The app listens on `MCP_PORT` inside the container and must expose not only `/mcp`, but also `/authorize` and the OAuth discovery endpoints under `/.well-known`.
 
 #### `docker run`
 
@@ -241,10 +258,11 @@ docker run -d \
 	--network traefik \
 	--env-file .env \
 	-e MCP_TRANSPORT=http \
-	-e MCP_AUTH_TOKEN=your-long-secret \
+	-e MCP_BASE_URL=https://mcp.example.com \
+	-e MCP_OAUTH_PASSWORD=choose-a-strong-password \
 	-e MCP_PORT=3000 \
 	-l traefik.enable=true \
-	-l traefik.http.routers.chatgpt-imap.rule="Host(`mcp.example.com`) && PathPrefix(`/mcp`)" \
+	-l traefik.http.routers.chatgpt-imap.rule="Host(`mcp.example.com`)" \
 	-l traefik.http.routers.chatgpt-imap.entrypoints=websecure \
 	-l traefik.http.routers.chatgpt-imap.tls=true \
 	-l traefik.http.services.chatgpt-imap.loadbalancer.server.port=3000 \
@@ -261,11 +279,12 @@ services:
       - .env
     environment:
       MCP_TRANSPORT: http
-      MCP_AUTH_TOKEN: your-long-secret
+			MCP_BASE_URL: https://mcp.example.com
+			MCP_OAUTH_PASSWORD: choose-a-strong-password
       MCP_PORT: 3000
     labels:
       traefik.enable: "true"
-      traefik.http.routers.chatgpt-imap.rule: Host(`mcp.example.com`) && PathPrefix(`/mcp`)
+			traefik.http.routers.chatgpt-imap.rule: Host(`mcp.example.com`)
       traefik.http.routers.chatgpt-imap.entrypoints: websecure
       traefik.http.routers.chatgpt-imap.tls: "true"
       traefik.http.services.chatgpt-imap.loadbalancer.server.port: "3000"
@@ -277,7 +296,7 @@ networks:
     external: true
 ```
 
-In both cases, configure your client to send `Authorization: Bearer <MCP_AUTH_TOKEN>` to the Traefik URL.
+In both cases, point ChatGPT at the public Traefik URL. The OAuth metadata, login page, and `/mcp` endpoint must all be reachable there.
 
 ## Development
 
