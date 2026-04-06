@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import type { Server as HttpServer } from "node:http";
+import { dirname, join } from "node:path";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import {
   InvalidGrantError,
@@ -84,8 +92,78 @@ type AuthorizeContext = {
   oauthPassword?: string;
 };
 
-class InMemoryClientsStore implements OAuthRegisteredClientsStore {
+class PersistentClientsStore implements OAuthRegisteredClientsStore {
   private readonly clients = new Map<string, OAuthClientInformationFull>();
+
+  constructor(private readonly filePath: string) {
+    this.load();
+  }
+
+  private load(): void {
+    try {
+      const data = readFileSync(this.filePath, "utf8");
+      const parsed: unknown = JSON.parse(data);
+      if (!Array.isArray(parsed)) {
+        logger.warn(
+          "OAuth clients store file has unexpected format; ignoring",
+          { file: this.filePath },
+        );
+        return;
+      }
+      let loaded = 0;
+      for (const item of parsed) {
+        if (
+          item !== null &&
+          typeof item === "object" &&
+          typeof (item as Record<string, unknown>).client_id === "string" &&
+          Array.isArray((item as Record<string, unknown>).redirect_uris)
+        ) {
+          const client = item as OAuthClientInformationFull;
+          this.clients.set(client.client_id, client);
+          loaded++;
+        } else {
+          logger.warn("Skipping invalid OAuth client record in persistent store", {
+            file: this.filePath,
+          });
+        }
+      }
+      logger.info("Loaded OAuth clients from persistent store", {
+        count: loaded,
+        file: this.filePath,
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code !== "ENOENT") {
+        logger.warn("Failed to load OAuth clients from persistent store", {
+          error: String(error),
+          file: this.filePath,
+        });
+      }
+    }
+  }
+
+  private save(): void {
+    const dir = dirname(this.filePath);
+    const tmpPath = join(dir, `.oauth_clients_tmp_${randomUUID()}.json`);
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        tmpPath,
+        JSON.stringify([...this.clients.values()], null, 2),
+        "utf8",
+      );
+      renameSync(tmpPath, this.filePath);
+    } catch (error) {
+      logger.warn("Failed to save OAuth clients to persistent store", {
+        error: String(error),
+        file: this.filePath,
+      });
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // best-effort cleanup of temp file
+      }
+    }
+  }
 
   async getClient(
     clientId: string,
@@ -116,12 +194,13 @@ class InMemoryClientsStore implements OAuthRegisteredClientsStore {
     };
 
     this.clients.set(registeredClient.client_id, registeredClient);
+    this.save();
     return registeredClient;
   }
 }
 
 class SingleUserOAuthProvider implements OAuthServerProvider {
-  public readonly clientsStore = new InMemoryClientsStore();
+  public readonly clientsStore: OAuthRegisteredClientsStore;
   private readonly authorizationCodes = new Map<
     string,
     AuthorizationCodeRecord
@@ -133,7 +212,10 @@ class SingleUserOAuthProvider implements OAuthServerProvider {
     private readonly resourceServerUrl: URL,
     private readonly accessTokenTtlSeconds: number,
     private readonly refreshTokenTtlSeconds: number,
-  ) {}
+    clientsStore: OAuthRegisteredClientsStore,
+  ) {
+    this.clientsStore = clientsStore;
+  }
 
   async authorize(
     client: OAuthClientInformationFull,
@@ -392,6 +474,9 @@ export async function startHttp(createServer: ServerFactory): Promise<void> {
     parsePositiveInt(
       process.env.MCP_OAUTH_REFRESH_TOKEN_TTL,
       DEFAULT_REFRESH_TOKEN_TTL_SECONDS,
+    ),
+    new PersistentClientsStore(
+      process.env.MCP_OAUTH_CLIENTS_FILE ?? "./data/oauth_clients.json",
     ),
   );
   const sessions = new Map<string, AuthSession>();

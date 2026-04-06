@@ -32,5 +32,11 @@ COPY --from=base /app/dist ./dist
 # Set environment variables
 ENV NODE_ENV=production
 
+# Create data directory for persistent OAuth client registrations
+RUN mkdir -p /app/data
+
+# Expose data directory as a volume so OAuth clients survive container restarts
+VOLUME ["/app/data"]
+
 # Default command (adjust as needed)
 CMD ["bun", "dist/server/mcp.js"]
