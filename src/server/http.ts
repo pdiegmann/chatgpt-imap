@@ -100,45 +100,61 @@ class PersistentClientsStore implements OAuthRegisteredClientsStore {
   }
 
   private load(): void {
+    let data: string;
     try {
-      const data = readFileSync(this.filePath, "utf8");
-      const parsed: unknown = JSON.parse(data);
-      if (!Array.isArray(parsed)) {
-        logger.warn(
-          "OAuth clients store file has unexpected format; ignoring",
-          { file: this.filePath },
-        );
-        return;
-      }
-      let loaded = 0;
-      for (const item of parsed) {
-        if (
-          item !== null &&
-          typeof item === "object" &&
-          typeof (item as Record<string, unknown>).client_id === "string" &&
-          Array.isArray((item as Record<string, unknown>).redirect_uris)
-        ) {
-          const client = item as OAuthClientInformationFull;
-          this.clients.set(client.client_id, client);
-          loaded++;
-        } else {
-          logger.warn("Skipping invalid OAuth client record in persistent store", {
-            file: this.filePath,
-          });
-        }
-      }
-      logger.info("Loaded OAuth clients from persistent store", {
-        count: loaded,
-        file: this.filePath,
-      });
+      data = readFileSync(this.filePath, "utf8");
     } catch (error) {
       if ((error as { code?: string }).code !== "ENOENT") {
-        logger.warn("Failed to load OAuth clients from persistent store", {
+        logger.warn("Failed to read OAuth clients store file", {
           error: String(error),
           file: this.filePath,
         });
       }
+      return;
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch (error) {
+      logger.warn("OAuth clients store file contains invalid JSON; ignoring", {
+        error: String(error),
+        file: this.filePath,
+      });
+      return;
+    }
+
+    if (!Array.isArray(parsed)) {
+      logger.warn(
+        "OAuth clients store file has unexpected format; ignoring",
+        { file: this.filePath },
+      );
+      return;
+    }
+
+    let loaded = 0;
+    for (const item of parsed) {
+      const record = item as Record<string, unknown>;
+      if (
+        item !== null &&
+        typeof item === "object" &&
+        typeof record.client_id === "string" &&
+        Array.isArray(record.redirect_uris) &&
+        (record.redirect_uris as unknown[]).every((u) => typeof u === "string")
+      ) {
+        const client = item as OAuthClientInformationFull;
+        this.clients.set(client.client_id, client);
+        loaded++;
+      } else {
+        logger.warn("Skipping invalid OAuth client record in persistent store", {
+          file: this.filePath,
+        });
+      }
+    }
+    logger.info("Loaded OAuth clients from persistent store", {
+      count: loaded,
+      file: this.filePath,
+    });
   }
 
   private save(): void {
