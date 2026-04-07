@@ -6,6 +6,9 @@ import { encodeEmailRef } from "../utils/crypto.js";
 import { logger } from "../utils/logging.js";
 import { compileQuery } from "./queryCompiler.js";
 
+/** Maximum raw bytes fetched from the start of a message to build a snippet. */
+const SNIPPET_SOURCE_BYTES = 4000;
+
 function formatAddress(
   addr: { name?: string; address?: string } | null | undefined,
 ): string {
@@ -20,6 +23,54 @@ function formatAddressList(
 ): string[] {
   if (!list) return [];
   return list.map(formatAddress).filter(Boolean);
+}
+
+/**
+ * Extracts a plain-text snippet from a raw RFC 2822 message buffer.
+ *
+ * Finds the blank-line separator between headers and body, then returns
+ * the first `maxLen` characters of the decoded body (best-effort:
+ * quoted-printable soft-line breaks are resolved, obvious base64 blocks
+ * are skipped).
+ */
+function extractSnippet(source: Buffer, maxLen = 200): string | null {
+  const raw = source.toString(
+    "utf8",
+    0,
+    Math.min(source.length, SNIPPET_SOURCE_BYTES),
+  );
+
+  // Locate blank line separating headers from body
+  const match = raw.match(/\r?\n\r?\n([\s\S]*)/);
+  if (!match) return null;
+
+  let body = match[1];
+
+  // Skip blocks that look like base64-encoded content (long runs of base64 chars)
+  if (/^[A-Za-z0-9+/\r\n]{40,}={0,2}\s*$/.test(body.trim())) {
+    return null;
+  }
+
+  // Decode quoted-printable soft line breaks and encoded chars
+  body = body
+    .replace(/=\r?\n/g, "")
+    .replace(/=[0-9A-Fa-f]{2}/g, (m) => {
+      try {
+        return String.fromCharCode(parseInt(m.slice(1), 16));
+      } catch {
+        return "";
+      }
+    });
+
+  // Strip MIME boundary markers and sub-part Content-* header lines
+  body = body
+    .replace(/^--[^\r\n]*[\r\n]*/gm, "")
+    .replace(/^Content-[^\r\n]+[\r\n]*/gim, "");
+
+  // Normalize whitespace
+  body = body.replace(/\s+/g, " ").trim();
+
+  return body.length > 0 ? body.slice(0, maxLen) : null;
 }
 
 export async function executeSearch(
@@ -49,12 +100,29 @@ export async function executeSearch(
     );
   }
 
-  const { imapSearch } = compileQuery(searchQuery.query);
+  const { imapSearch, isMatchAll } = compileQuery(
+    searchQuery.query ?? { type: "group", operator: "AND", children: [] },
+  );
   const limit = searchQuery.limit ?? 25;
   const offset = searchQuery.offset ?? 0;
+  const sortDirection = searchQuery.sort?.direction ?? "desc";
+  const returnSnippet = searchQuery.return_body_snippet ?? false;
+  // Total results needed to satisfy the requested page
+  const needed = offset + limit;
+
+  if (isMatchAll) {
+    warnings.push(
+      "No query conditions provided – returning most recent messages. " +
+        "Specify folders to narrow the scope.",
+    );
+  }
+
   const allResults: EmailSummary[] = [];
 
   for (const folderPath of targetFolders) {
+    // Stop scanning more folders once we have enough results
+    if (allResults.length >= needed) break;
+
     try {
       const lock = await client.getMailboxLock(folderPath);
       try {
@@ -71,18 +139,30 @@ export async function executeSearch(
         const searchResult = await client.search(imapSearch, { uid: true });
         // biome-ignore lint/complexity/useOptionalChain: searchResult can be "false" which would not have "uid" property, but if it's an array it should be treated as such
         if (!searchResult || !searchResult.length) continue;
-        const uids = searchResult;
 
-        // Search results are in ascending order; reverse for newest-first
-        const sortedUids = [...uids].reverse();
+        // UIDs come back in ascending order; apply the requested sort direction.
+        const sortedUids =
+          sortDirection === "asc"
+            ? [...searchResult]
+            : [...searchResult].reverse();
+
+        // For match-all queries, cap per-folder fetches to avoid downloading
+        // the entire mailbox when the caller only needs a few results.
+        const remaining = needed - allResults.length;
+        const uidsToFetch = isMatchAll
+          ? sortedUids.slice(0, remaining)
+          : sortedUids;
 
         for await (const msg of client.fetch(
-          sortedUids as number[],
+          uidsToFetch as number[],
           {
             uid: true,
             flags: true,
             envelope: true,
             bodyStructure: true,
+            ...(returnSnippet
+              ? { source: { start: 0, maxLength: SNIPPET_SOURCE_BYTES } }
+              : {}),
           },
           { uid: true },
         )) {
@@ -104,6 +184,11 @@ export async function executeSearch(
                 )
               : null;
 
+          const snippet =
+            returnSnippet && msg.source
+              ? extractSnippet(msg.source as Buffer)
+              : null;
+
           allResults.push({
             email_ref,
             folder: folderPath,
@@ -114,10 +199,13 @@ export async function executeSearch(
             to: formatAddressList(env?.to),
             cc: formatAddressList(env?.cc),
             subject: env?.subject ?? null,
-            snippet: null,
+            snippet,
             seen,
             has_attachments: hasAttachments,
           });
+
+          // Stop fetching from this folder once we have enough for the page
+          if (allResults.length >= needed) break;
         }
       } finally {
         lock.release();
