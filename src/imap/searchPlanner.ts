@@ -6,6 +6,9 @@ import { encodeEmailRef } from "../utils/crypto.js";
 import { logger } from "../utils/logging.js";
 import { compileQuery } from "./queryCompiler.js";
 
+/** Maximum raw bytes fetched from the start of a message to build a snippet. */
+const SNIPPET_SOURCE_BYTES = 4000;
+
 function formatAddress(
   addr: { name?: string; address?: string } | null | undefined,
 ): string {
@@ -31,7 +34,11 @@ function formatAddressList(
  * are skipped).
  */
 function extractSnippet(source: Buffer, maxLen = 200): string | null {
-  const raw = source.toString("utf8", 0, Math.min(source.length, 4000));
+  const raw = source.toString(
+    "utf8",
+    0,
+    Math.min(source.length, SNIPPET_SOURCE_BYTES),
+  );
 
   // Locate blank line separating headers from body
   const match = raw.match(/\r?\n\r?\n([\s\S]*)/);
@@ -39,7 +46,7 @@ function extractSnippet(source: Buffer, maxLen = 200): string | null {
 
   let body = match[1];
 
-  // Skip blocks that look like base64-encoded content
+  // Skip blocks that look like base64-encoded content (long runs of base64 chars)
   if (/^[A-Za-z0-9+/\r\n]{40,}={0,2}\s*$/.test(body.trim())) {
     return null;
   }
@@ -63,7 +70,7 @@ function extractSnippet(source: Buffer, maxLen = 200): string | null {
   // Normalize whitespace
   body = body.replace(/\s+/g, " ").trim();
 
-  return body.slice(0, maxLen) || null;
+  return body.length > 0 ? body.slice(0, maxLen) : null;
 }
 
 export async function executeSearch(
@@ -154,7 +161,7 @@ export async function executeSearch(
             envelope: true,
             bodyStructure: true,
             ...(returnSnippet
-              ? { source: { start: 0, maxLength: 4000 } }
+              ? { source: { start: 0, maxLength: SNIPPET_SOURCE_BYTES } }
               : {}),
           },
           { uid: true },
