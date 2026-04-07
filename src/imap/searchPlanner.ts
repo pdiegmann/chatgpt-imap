@@ -126,14 +126,11 @@ export async function executeSearch(
     try {
       const lock = await client.getMailboxLock(folderPath);
       try {
-        // Fetch uidValidity once before iterating messages
-        let uidValidity = 1;
-        try {
-          const status = await client.status(folderPath, { uidValidity: true });
-          uidValidity = Number(status.uidValidity ?? 1);
-        } catch {
-          // use default
-        }
+        // Use the uidValidity from the selected mailbox (populated by getMailboxLock/SELECT)
+        // instead of issuing a redundant STATUS command on the already-selected mailbox.
+        const uidValidity = Number(
+          (client.mailbox ? client.mailbox.uidValidity : undefined) ?? 1n,
+        );
 
         // imapflow's search() returns false when no messages match (not an empty array)
         const searchResult = await client.search(imapSearch, { uid: true });

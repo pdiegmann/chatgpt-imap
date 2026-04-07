@@ -6,7 +6,7 @@ export const GetEmailInputSchema = z
 		include_body_text: z.boolean().default(true),
 		include_body_html: z.boolean().default(false),
 		include_headers: z.boolean().default(true),
-		include_attachments: z.boolean().default(true),
+		include_attachments: z.boolean().default(false),
 		max_body_chars: z.number().int().min(100).max(200000).default(40000),
 	})
 	.strict();
