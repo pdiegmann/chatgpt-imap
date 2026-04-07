@@ -3,6 +3,8 @@ import type { ConditionNode, GroupNode, QueryNode } from "../types/query.js";
 
 export interface CompiledQuery {
 	imapSearch: SearchObject;
+	/** True when the query has no filtering conditions (matches every message). */
+	isMatchAll: boolean;
 }
 
 function conditionToImap(node: ConditionNode): SearchObject {
@@ -75,5 +77,8 @@ export function nodeToImap(node: QueryNode): SearchObject {
 }
 
 export function compileQuery(node: QueryNode): CompiledQuery {
-	return { imapSearch: nodeToImap(node) };
+	const imapSearch = nodeToImap(node);
+	const isMatchAll = Object.keys(imapSearch).length === 0;
+	// Use explicit { all: true } so imapflow sends "ALL" rather than no criteria
+	return { imapSearch: isMatchAll ? { all: true } : imapSearch, isMatchAll };
 }

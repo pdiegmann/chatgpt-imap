@@ -78,7 +78,10 @@ export function registerTools(server: McpServer): void {
 					value: z.union([z.string(), z.array(z.string())]).optional(),
 					children: z.array(z.unknown()).optional(),
 				})
-				.describe("Query DSL node (condition or group with AND/OR)"),
+				.optional()
+				.describe(
+					"Query DSL node (condition or group with AND/OR). Omit or send an empty group to fetch all messages (newest first).",
+				),
 			limit: z.number().int().min(1).max(200).default(25),
 			offset: z.number().int().min(0).default(0),
 			sort: z

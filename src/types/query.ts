@@ -27,7 +27,7 @@ export interface GroupNode {
 export type QueryNode = ConditionNode | GroupNode;
 
 export interface SearchQuery {
-	query: QueryNode;
+	query?: QueryNode;
 	folders?: string[];
 	special_folders?: Array<
 		"inbox" | "archive" | "drafts" | "sent" | "trash" | "junk"
