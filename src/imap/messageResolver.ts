@@ -245,7 +245,7 @@ export async function resolveMessage(
 		// instead of issuing a redundant STATUS command on the already-selected mailbox,
 		// which RFC 3501 discourages and which can hang on some servers.
 		const uidValidity = Number(
-			(client.mailbox ? client.mailbox.uidValidity : undefined) ?? 1n,
+			(client.mailbox ? client.mailbox.uidValidity : undefined) ?? 1,
 		);
 
 		// Always use the optimized body-parts path which fetches only the text

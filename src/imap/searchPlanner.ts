@@ -129,7 +129,7 @@ export async function executeSearch(
         // Use the uidValidity from the selected mailbox (populated by getMailboxLock/SELECT)
         // instead of issuing a redundant STATUS command on the already-selected mailbox.
         const uidValidity = Number(
-          (client.mailbox ? client.mailbox.uidValidity : undefined) ?? 1n,
+          (client.mailbox ? client.mailbox.uidValidity : undefined) ?? 1,
         );
 
         // imapflow's search() returns false when no messages match (not an empty array)
