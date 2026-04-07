@@ -142,13 +142,27 @@ function decodeBodyPart(
 			"base64",
 		);
 	} else if (enc === "quoted-printable") {
-		const decoded = raw
-			.toString("binary")
-			.replace(/=\r?\n/g, "")
-			.replace(/=([0-9A-Fa-f]{2})/g, (_, hex) =>
-				String.fromCharCode(parseInt(hex, 16)),
-			);
-		bytes = Buffer.from(decoded, "binary");
+		// Decode QP to bytes directly for consistency with the base64 path
+		const str = raw.toString("ascii");
+		const buf = new Uint8Array(str.length);
+		let out = 0;
+		for (let i = 0; i < str.length; ) {
+			if (str[i] === "=" && i + 1 < str.length) {
+				const next = str[i + 1];
+				if (next === "\r" || next === "\n") {
+					// soft line break
+					i += next === "\r" && str[i + 2] === "\n" ? 3 : 2;
+				} else if (i + 2 < str.length && /[0-9A-Fa-f]{2}/.test(str.slice(i + 1, i + 3))) {
+					buf[out++] = parseInt(str.slice(i + 1, i + 3), 16);
+					i += 3;
+				} else {
+					buf[out++] = str.charCodeAt(i++);
+				}
+			} else {
+				buf[out++] = str.charCodeAt(i++);
+			}
+		}
+		bytes = Buffer.from(buf.subarray(0, out));
 	} else {
 		bytes = raw;
 	}
@@ -471,6 +485,14 @@ async function resolveWithBodyParts(
 				decoded.length > options.maxBodyChars
 					? decoded.slice(0, options.maxBodyChars)
 					: decoded;
+		}
+
+		// Stop decoding once both requested text types have been found
+		if (
+			(!options.includeBodyText || body_text !== null) &&
+			(!options.includeBodyHtml || body_html !== null)
+		) {
+			break;
 		}
 	}
 
