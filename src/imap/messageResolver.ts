@@ -1,5 +1,5 @@
 import type { FetchMessageObject, ImapFlow, MessageStructureObject } from "imapflow";
-import type { AddressObject, Attachment, StructuredHeader } from "mailparser";
+import type { AddressObject, StructuredHeader } from "mailparser";
 import type { HeaderValue } from "mailparser";
 import { simpleParser } from "mailparser";
 import type { EmailFull } from "../types/email.js";
@@ -126,6 +126,57 @@ function hasAttachmentNodes(
 }
 
 /**
+ * Walk a BODYSTRUCTURE tree and collect metadata for attachment nodes.
+ * This avoids downloading the actual attachment data.
+ */
+function collectAttachmentInfo(
+	structure: MessageStructureObject | undefined,
+	depth = 0,
+): Array<{
+	filename: string | null;
+	content_type: string;
+	size: number;
+	content_id: string | null;
+}> {
+	if (!structure || depth > 10) return [];
+	const type = structure.type.toLowerCase();
+
+	if (type.startsWith("multipart/")) {
+		const results: Array<{
+			filename: string | null;
+			content_type: string;
+			size: number;
+			content_id: string | null;
+		}> = [];
+		for (const child of structure.childNodes ?? []) {
+			results.push(...collectAttachmentInfo(child, depth + 1));
+		}
+		return results;
+	}
+
+	if (type === "message/rfc822") {
+		return collectAttachmentInfo(structure.childNodes?.[0], depth + 1);
+	}
+
+	if (structure.disposition?.toLowerCase() === "attachment") {
+		const filename =
+			structure.dispositionParameters?.filename ??
+			structure.parameters?.name ??
+			null;
+		return [
+			{
+				filename,
+				content_type: type || "application/octet-stream",
+				size: structure.size ?? 0,
+				content_id: structure.id ?? null,
+			},
+		];
+	}
+
+	return [];
+}
+
+/**
  * Decode a raw IMAP body-part buffer (base64 or quoted-printable) to a UTF-8 string.
  */
 function decodeBodyPart(
@@ -190,24 +241,17 @@ export async function resolveMessage(
 ): Promise<EmailFull | null> {
 	const lock = await client.getMailboxLock(folder);
 	try {
-		let uidValidity = 1;
-		try {
-			const status = await client.status(folder, { uidValidity: true });
-			uidValidity = Number(status.uidValidity ?? 1);
-		} catch {
-			// use default
-		}
+		// Use the uidValidity from the selected mailbox (populated by getMailboxLock/SELECT)
+		// instead of issuing a redundant STATUS command on the already-selected mailbox,
+		// which RFC 3501 discourages and which can hang on some servers.
+		const uidValidity = Number(
+			(client.mailbox ? client.mailbox.uidValidity : undefined) ?? 1,
+		);
 
-		if (options.includeAttachments) {
-			return await resolveWithFullSource(
-				client,
-				accountId,
-				folder,
-				uid,
-				uidValidity,
-				options,
-			);
-		}
+		// Always use the optimized body-parts path which fetches only the text
+		// sections identified via BODYSTRUCTURE, avoiding the expensive download
+		// of the full RFC 2822 source (which includes all attachment data and
+		// can easily exceed operation timeouts for large messages).
 		return await resolveWithBodyParts(
 			client,
 			accountId,
@@ -222,124 +266,13 @@ export async function resolveMessage(
 }
 
 /**
- * Full-source path: download the complete RFC 2822 message and parse with simpleParser.
- * Used when includeAttachments is true.
- */
-async function resolveWithFullSource(
-	client: ImapFlow,
-	accountId: string,
-	folder: string,
-	uid: number,
-	uidValidity: number,
-	options: {
-		includeBodyText: boolean;
-		includeBodyHtml: boolean;
-		includeHeaders: boolean;
-		maxBodyChars: number;
-	},
-): Promise<EmailFull | null> {
-	for await (const msg of client.fetch(
-		String(uid),
-		{ uid: true, flags: true, envelope: true, source: true },
-		{ uid: true },
-	)) {
-		const source = msg.source;
-		if (!source) return null;
-
-		const parsed = await simpleParser(source);
-		const env = msg.envelope;
-
-		const email_ref = encodeEmailRef({
-			account_id: accountId,
-			folder,
-			uid_validity: uidValidity,
-			uid,
-		});
-
-		const headers: Record<string, string> = {};
-		if (options.includeHeaders && parsed.headers) {
-			for (const [key, value] of parsed.headers.entries()) {
-				headers[key] = headerValueToString(value);
-			}
-		}
-
-		const attachments = (parsed.attachments ?? []).map((att: Attachment) => ({
-			filename: att.filename ?? null,
-			content_type: att.contentType ?? "application/octet-stream",
-			size: att.size ?? 0,
-			content_id: att.contentId ?? null,
-		}));
-
-		let body_text = options.includeBodyText ? (parsed.text ?? null) : null;
-		if (body_text && body_text.length > options.maxBodyChars) {
-			body_text = body_text.slice(0, options.maxBodyChars);
-		}
-		let body_html = options.includeBodyHtml ? parsed.html || null : null;
-		if (body_html && body_html.length > options.maxBodyChars) {
-			body_html = body_html.slice(0, options.maxBodyChars);
-		}
-
-		const replyToAddr = parsed.replyTo
-			? formatAddress(parsed.replyTo.value?.[0])
-			: null;
-		const toList = parsed.to
-			? formatAddressList(
-					Array.isArray(parsed.to)
-						? parsed.to.flatMap((a: AddressObject) => a.value)
-						: parsed.to.value,
-				)
-			: formatAddressList(env?.to);
-		const ccList = parsed.cc
-			? formatAddressList(
-					Array.isArray(parsed.cc)
-						? parsed.cc.flatMap((a: AddressObject) => a.value)
-						: parsed.cc.value,
-				)
-			: formatAddressList(env?.cc);
-		const bccList = parsed.bcc
-			? formatAddressList(
-					Array.isArray(parsed.bcc)
-						? parsed.bcc.flatMap((a: AddressObject) => a.value)
-						: parsed.bcc.value,
-				)
-			: formatAddressList(env?.bcc);
-
-		return {
-			email_ref,
-			folder,
-			uid,
-			message_id: parsed.messageId ?? env?.messageId ?? null,
-			date:
-				parsed.date?.toISOString() ??
-				env?.date?.toISOString() ??
-				new Date().toISOString(),
-			from: formatAddress(parsed.from?.value?.[0] ?? env?.from?.[0]),
-			reply_to: replyToAddr,
-			to: toList,
-			cc: ccList,
-			bcc: bccList,
-			subject: parsed.subject ?? env?.subject ?? null,
-			snippet: null,
-			seen: msg.flags?.has("\\Seen") ?? false,
-			has_attachments: attachments.length > 0,
-			body_text,
-			body_html,
-			headers,
-			flagged: msg.flags?.has("\\Flagged") ?? false,
-			draft: msg.flags?.has("\\Draft") ?? false,
-			answered: msg.flags?.has("\\Answered") ?? false,
-			attachments,
-		};
-	}
-	return null;
-}
-
-/**
- * Optimized path: fetch only headers and text body sections, skipping attachment data.
- * Used when includeAttachments is false to avoid downloading large attachments.
+ * Fetch email content using targeted body-part requests, skipping attachment data.
  *
  * Pass 1: fetch envelope + flags + bodyStructure + headers (no body bytes).
  * Pass 2: fetch only the text/html body-part sections identified in pass 1.
+ *
+ * Attachment metadata (filename, type, size) is extracted from BODYSTRUCTURE
+ * without downloading the actual attachment data.
  */
 async function resolveWithBodyParts(
 	client: ImapFlow,
@@ -351,6 +284,7 @@ async function resolveWithBodyParts(
 		includeBodyText: boolean;
 		includeBodyHtml: boolean;
 		includeHeaders: boolean;
+		includeAttachments: boolean;
 		maxBodyChars: number;
 	},
 ): Promise<EmailFull | null> {
@@ -496,6 +430,11 @@ async function resolveWithBodyParts(
 		}
 	}
 
+	// Extract attachment metadata from BODYSTRUCTURE (no download needed)
+	const attachments = options.includeAttachments
+		? collectAttachmentInfo(structMsg.bodyStructure)
+		: [];
+
 	return {
 		email_ref,
 		folder,
@@ -517,6 +456,6 @@ async function resolveWithBodyParts(
 		flagged,
 		draft,
 		answered,
-		attachments: [],
+		attachments,
 	};
 }
